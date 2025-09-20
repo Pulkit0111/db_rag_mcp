@@ -36,6 +36,7 @@ class PostgresManager(BaseManager):
         """
         try:
             # Create connection pool for better performance
+            # Set statement_cache_size=0 to avoid conflicts with pgbouncer
             self.connection_pool = await asyncpg.create_pool(
                 host=self.connection_config['host'],
                 port=self.connection_config['port'],
@@ -44,7 +45,8 @@ class PostgresManager(BaseManager):
                 database=self.connection_config['database'],
                 min_size=1,
                 max_size=5,
-                command_timeout=30
+                command_timeout=30,
+                statement_cache_size=0  # Disable prepared statements for pgbouncer compatibility
             )
             
             # Test the connection

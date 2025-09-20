@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "natural-language-sql": {
+      "command": "python",
+      "args": [
+        "/Users/pulkittyagi/Desktop/capstone_projects/db-rag/src/server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/pulkittyagi/Desktop/capstone_projects/db-rag"
+      }
+    }
+  }
+}
+

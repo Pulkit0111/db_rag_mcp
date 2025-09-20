@@ -9,8 +9,11 @@ from typing import Dict, Any, List
 from fastmcp import Context
 
 from .connection import get_database_manager
+from ..core.cache import cache_query_result, schema_cache
+from ..core.config import config
 
 
+@cache_query_result(ttl=1800)  # Cache for 30 minutes
 async def list_tables(ctx: Context) -> Dict[str, Any]:
     """
     List all tables in the connected database.
@@ -66,6 +69,7 @@ async def list_tables(ctx: Context) -> Dict[str, Any]:
         }
 
 
+@cache_query_result(ttl=1800)  # Cache for 30 minutes
 async def describe_table(ctx: Context, table_name: str) -> Dict[str, Any]:
     """
     Get detailed schema information for a specific table.

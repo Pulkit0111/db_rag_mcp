@@ -10,6 +10,7 @@ from fastmcp import Context
 
 from ..database import create_database_manager, BaseManager
 from ..core.config import config
+from ..core.exceptions import DatabaseConnectionError, ConfigurationError
 
 
 # Global dictionary to store database managers per session
@@ -51,6 +52,14 @@ async def connect_database(
     session_id = _get_session_id(ctx)
     
     try:
+        # Check if config is available
+        if config is None:
+            raise ConfigurationError(
+                "global_config",
+                "Configuration could not be loaded",
+                technical_details="Config object is None"
+            )
+        
         # Use provided parameters or fall back to config defaults
         connection_config = {
             'host': host or config.database.host,
@@ -65,7 +74,15 @@ async def connect_database(
         await ctx.info(f"Attempting to connect to {db_type} database at {connection_config['host']}:{connection_config['port']}")
         
         # Create database manager
-        db_manager = create_database_manager(db_type, connection_config)
+        try:
+            db_manager = create_database_manager(db_type, connection_config)
+        except ValueError as e:
+            raise DatabaseConnectionError(
+                db_type=db_type,
+                host=connection_config['host'],
+                port=connection_config['port'],
+                technical_details=str(e)
+            )
         
         # Attempt connection
         success = await db_manager.connect()
@@ -86,19 +103,36 @@ async def connect_database(
                 "session_id": session_id
             }
         else:
-            await ctx.error("Failed to establish database connection")
-            return {
-                "success": False,
-                "message": "Failed to connect to database",
-                "error": "Connection attempt failed"
-            }
+            # Connection failed, raise appropriate exception
+            raise DatabaseConnectionError(
+                db_type=db_type,
+                host=connection_config['host'],
+                port=connection_config['port'],
+                technical_details="Connection attempt returned False"
+            )
             
-    except Exception as e:
-        await ctx.error(f"Database connection error: {str(e)}")
+    except DatabaseConnectionError as e:
+        await ctx.error(f"Database connection failed: {e.user_message}")
         return {
             "success": False,
-            "message": "Database connection failed",
-            "error": str(e)
+            "error": e.to_dict(include_technical=config.debug if config else False)
+        }
+    except ConfigurationError as e:
+        await ctx.error(f"Configuration error: {e.user_message}")
+        return {
+            "success": False,
+            "error": e.to_dict(include_technical=config.debug if config else False)
+        }
+    except Exception as e:
+        # Unexpected error - convert to DatabaseConnectionError
+        db_error = DatabaseConnectionError(
+            db_type=db_type or "unknown",
+            technical_details=str(e)
+        )
+        await ctx.error(f"Unexpected error during connection: {db_error.user_message}")
+        return {
+            "success": False,
+            "error": db_error.to_dict(include_technical=config.debug if config else False)
         }
 
 
@@ -125,15 +159,29 @@ async def disconnect_database(ctx: Context) -> Dict[str, Any]:
         else:
             return {
                 "success": False,
-                "message": "No active database connection found"
+                "message": "No active database connection found",
+                "suggestions": [
+                    "Use connect_database tool to establish a connection first",
+                    "Check if you're using the same session as when you connected"
+                ]
             }
             
     except Exception as e:
-        await ctx.error(f"Disconnection error: {str(e)}")
+        db_error = DatabaseConnectionError(
+            db_type="unknown",
+            technical_details=str(e)
+        )
+        db_error.user_message = "Failed to disconnect from database properly"
+        db_error.suggestions = [
+            "Connection may have been lost already",
+            "Try reconnecting if you need to use the database again",
+            "Check server logs for more details"
+        ]
+        
+        await ctx.error(f"Disconnection error: {db_error.user_message}")
         return {
             "success": False,
-            "message": "Failed to disconnect from database",
-            "error": str(e)
+            "error": db_error.to_dict(include_technical=config.debug if config else False)
         }
 
 
@@ -161,20 +209,39 @@ async def get_connection_status(ctx: Context) -> Dict[str, Any]:
             else:
                 return {
                     "connected": False,
-                    "message": "Database connection is not working"
+                    "message": "Database connection is not working",
+                    "suggestions": [
+                        "Try disconnecting and reconnecting to the database",
+                        "Check if the database server is still running",
+                        "Verify network connectivity"
+                    ]
                 }
         else:
             return {
                 "connected": False,
-                "message": "No database connection established"
+                "message": "No database connection established",
+                "suggestions": [
+                    "Use connect_database tool to establish a connection first",
+                    "Provide valid database credentials and configuration"
+                ]
             }
             
     except Exception as e:
-        await ctx.error(f"Error checking connection status: {str(e)}")
+        db_error = DatabaseConnectionError(
+            db_type="unknown",
+            technical_details=str(e)
+        )
+        db_error.user_message = "Error checking database connection status"
+        db_error.suggestions = [
+            "Database connection may have been lost",
+            "Try reconnecting to the database",
+            "Check database server availability"
+        ]
+        
+        await ctx.error(f"Error checking connection status: {db_error.user_message}")
         return {
             "connected": False,
-            "message": "Error checking connection status",
-            "error": str(e)
+            "error": db_error.to_dict(include_technical=config.debug if config else False)
         }
 
 

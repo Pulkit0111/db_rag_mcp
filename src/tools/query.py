@@ -11,8 +11,24 @@ from fastmcp import Context
 
 from .connection import get_database_manager
 from ..nlp.translator import get_translator
+from ..core.exceptions import (
+    DatabaseConnectionError, 
+    QueryTranslationError, 
+    QueryExecutionError,
+    ValidationError
+)
+from ..core.config import config
+from ..core.session_manager import session_manager
+from ..core.cache import cache_query_result, query_cache, schema_cache
+import time
 
 
+def _get_session_id(ctx: Context) -> str:
+    """Get session ID from context."""
+    return getattr(ctx, 'session_id', 'default_session')
+
+
+@cache_query_result(ttl=600)  # Cache for 10 minutes
 async def query_data(ctx: Context, natural_language_query: str) -> Dict[str, Any]:
     """
     Execute a natural language query against the database.
@@ -26,26 +42,35 @@ async def query_data(ctx: Context, natural_language_query: str) -> Dict[str, Any
     Returns:
         Dictionary containing query results or error information
     """
+    start_time = time.time()
+    session_id = _get_session_id(ctx)
+    sql_query = ""
+    db_type = "unknown"
+    
     try:
+        # Validate input
+        if not natural_language_query or not natural_language_query.strip():
+            raise ValidationError(
+                "natural_language_query",
+                "empty string",
+                "Query must be a non-empty string"
+            )
+        
         # Get the database manager for this session
         db_manager = get_database_manager(ctx)
         
         if not db_manager:
-            await ctx.error("No database connection found. Please connect to a database first.")
-            return {
-                "success": False,
-                "message": "No database connection found",
-                "results": []
-            }
+            raise DatabaseConnectionError(
+                db_type="unknown",
+                technical_details="No database manager found in session"
+            )
         
         # Check if connection is still active
         if not await db_manager.test_connection():
-            await ctx.error("Database connection is not active")
-            return {
-                "success": False,
-                "message": "Database connection is not active",
-                "results": []
-            }
+            raise DatabaseConnectionError(
+                db_type="unknown",
+                technical_details="Connection test failed"
+            )
         
         await ctx.info(f"Processing natural language query: {natural_language_query}")
         
@@ -54,16 +79,16 @@ async def query_data(ctx: Context, natural_language_query: str) -> Dict[str, Any
         tables = await db_manager.get_tables()
         
         if not tables:
-            await ctx.warning("No tables found in database")
-            return {
-                "success": False,
-                "message": "Database appears to be empty (no tables found)",
-                "results": []
-            }
+            raise QueryTranslationError(
+                query=natural_language_query,
+                reason="Database appears to be empty (no tables found)",
+                technical_details="get_tables() returned empty list"
+            )
         
-        # Get schema for all tables (or limit to reasonable number for performance)
+        # Get schema for all tables (limit for performance)
         schemas = []
-        table_limit = min(len(tables), 10)  # Limit to first 10 tables for performance
+        max_tables = config.max_result_rows // 100 if config else 10  # Dynamic limit based on config
+        table_limit = min(len(tables), max_tables)
         
         for table_name in tables[:table_limit]:
             try:
@@ -74,11 +99,11 @@ async def query_data(ctx: Context, natural_language_query: str) -> Dict[str, Any
                 await ctx.warning(f"Could not access schema for table {table_name}: {str(e)}")
         
         if not schemas:
-            return {
-                "success": False,
-                "message": "Could not access any table schemas",
-                "results": []
-            }
+            raise QueryTranslationError(
+                query=natural_language_query,
+                reason="Could not access any table schemas",
+                technical_details="All table schema requests failed"
+            )
         
         await ctx.info(f"Using schema from {len(schemas)} tables for query translation")
         
@@ -86,20 +111,21 @@ async def query_data(ctx: Context, natural_language_query: str) -> Dict[str, Any
         await ctx.info("Translating natural language to SQL")
         translator = get_translator()
         
+        # Get database type from config or manager
+        db_type = config.database.db_type if config else "postgresql"
+        
         translation_result = await translator.translate_to_select(
             natural_language_query,
             schemas,
-            database_type="postgresql"  # TODO: Get from config
+            database_type=db_type
         )
         
         if not translation_result["success"]:
-            await ctx.error(f"Failed to translate query: {translation_result.get('error', 'Unknown error')}")
-            return {
-                "success": False,
-                "message": "Failed to translate natural language to SQL",
-                "error": translation_result.get('error'),
-                "results": []
-            }
+            raise QueryTranslationError(
+                query=natural_language_query,
+                reason=translation_result.get('error', 'Translation failed'),
+                technical_details=str(translation_result)
+            )
         
         sql_query = translation_result["sql_query"]
         await ctx.info(f"Generated SQL: {sql_query}")
@@ -109,34 +135,107 @@ async def query_data(ctx: Context, natural_language_query: str) -> Dict[str, Any
         query_result = await db_manager.execute_query(sql_query)
         
         if not query_result.success:
-            await ctx.error(f"Query execution failed: {query_result.error_message}")
-            return {
-                "success": False,
-                "message": "SQL query execution failed",
-                "error": query_result.error_message,
-                "generated_sql": sql_query,
-                "results": []
-            }
+            raise QueryExecutionError(
+                sql_query=sql_query,
+                db_error=query_result.error_message,
+                technical_details=f"Row count: {query_result.row_count}"
+            )
         
         await ctx.info(f"Query executed successfully, returned {query_result.row_count} rows")
+        
+        # Check if result set is too large
+        max_rows = config.max_result_rows if config else 1000
+        truncated = query_result.row_count > max_rows
+        if truncated:
+            await ctx.warning(f"Result set ({query_result.row_count} rows) exceeds limit ({max_rows}). Truncating results.")
+            query_result.data = query_result.data[:max_rows]
+        
+        # Record successful query in history
+        execution_time = time.time() - start_time
+        if config and config.enable_query_history:
+            try:
+                await session_manager.add_query(
+                    session_id=session_id,
+                    natural_query=natural_language_query,
+                    sql_query=sql_query,
+                    execution_time=execution_time,
+                    results_count=query_result.row_count,
+                    success=True,
+                    database_type=db_type
+                )
+            except Exception as e:
+                await ctx.warning(f"Failed to record query in history: {str(e)}")
         
         # Format results for return
         return {
             "success": True,
-            "message": f"Query executed successfully, returned {query_result.row_count} rows",
+            "message": f"Query executed successfully, returned {len(query_result.data)} rows",
             "original_query": natural_language_query,
             "generated_sql": sql_query,
             "row_count": query_result.row_count,
-            "results": query_result.data
+            "results": query_result.data,
+            "truncated": truncated,
+            "execution_time": round(execution_time, 3)
         }
         
-    except Exception as e:
-        await ctx.error(f"Error processing query: {str(e)}")
+    except (DatabaseConnectionError, QueryTranslationError, QueryExecutionError, ValidationError) as e:
+        await ctx.error(f"Query processing failed: {e.user_message}")
+        
+        # Record failed query in history
+        execution_time = time.time() - start_time
+        if config and config.enable_query_history:
+            try:
+                await session_manager.add_query(
+                    session_id=session_id,
+                    natural_query=natural_language_query,
+                    sql_query=sql_query,
+                    execution_time=execution_time,
+                    results_count=0,
+                    success=False,
+                    database_type=db_type,
+                    error_message=e.user_message
+                )
+            except Exception as history_error:
+                await ctx.warning(f"Failed to record failed query in history: {str(history_error)}")
+        
         return {
             "success": False,
-            "message": "Error processing natural language query",
-            "error": str(e),
-            "results": []
+            "error": e.to_dict(include_technical=config.debug if config else False),
+            "results": [],
+            "execution_time": round(execution_time, 3)
+        }
+    except Exception as e:
+        # Unexpected error - convert to appropriate exception
+        unexpected_error = QueryExecutionError(
+            sql_query=sql_query or "unknown",
+            db_error="Unexpected error during query processing",
+            technical_details=str(e)
+        )
+        
+        await ctx.error(f"Unexpected error during query: {unexpected_error.user_message}")
+        
+        # Record unexpected error in history
+        execution_time = time.time() - start_time
+        if config and config.enable_query_history:
+            try:
+                await session_manager.add_query(
+                    session_id=session_id,
+                    natural_query=natural_language_query,
+                    sql_query=sql_query,
+                    execution_time=execution_time,
+                    results_count=0,
+                    success=False,
+                    database_type=db_type,
+                    error_message=unexpected_error.user_message
+                )
+            except Exception as history_error:
+                await ctx.warning(f"Failed to record unexpected error in history: {str(history_error)}")
+        
+        return {
+            "success": False,
+            "error": unexpected_error.to_dict(include_technical=config.debug if config else False),
+            "results": [],
+            "execution_time": round(execution_time, 3)
         }
 
 

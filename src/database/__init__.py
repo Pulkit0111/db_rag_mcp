@@ -8,6 +8,8 @@ based on the database type specified in configuration.
 from typing import Dict, Any, List
 from .base_manager import BaseManager, TableSchema, QueryResult
 from .postgres_manager import PostgresManager
+from .mysql_manager import MySQLManager
+from .sqlite_manager import SQLiteManager
 
 
 class DatabaseManagerFactory:
@@ -19,7 +21,7 @@ class DatabaseManagerFactory:
         Create and return appropriate database manager based on database type.
         
         Args:
-            db_type: Type of database ('postgresql', 'mysql', etc.)
+            db_type: Type of database ('postgresql', 'mysql', 'sqlite', etc.)
             connection_config: Connection configuration dictionary
             
         Returns:
@@ -30,14 +32,12 @@ class DatabaseManagerFactory:
         """
         db_type_lower = db_type.lower()
         
-        if db_type_lower == 'postgresql' or db_type_lower == 'postgres':
+        if db_type_lower in ['postgresql', 'postgres']:
             return PostgresManager(connection_config)
         elif db_type_lower == 'mysql':
-            # TODO: Implement MySQL manager in future
-            raise ValueError(f"MySQL support not yet implemented")
+            return MySQLManager(connection_config)
         elif db_type_lower == 'sqlite':
-            # TODO: Implement SQLite manager in future  
-            raise ValueError(f"SQLite support not yet implemented")
+            return SQLiteManager(connection_config)
         else:
             raise ValueError(f"Unsupported database type: {db_type}")
     
@@ -49,7 +49,7 @@ class DatabaseManagerFactory:
         Returns:
             List of supported database type strings
         """
-        return ['postgresql', 'postgres']
+        return ['postgresql', 'postgres', 'mysql', 'sqlite']
 
 
 # Convenience function for creating database managers
@@ -73,6 +73,8 @@ __all__ = [
     'TableSchema', 
     'QueryResult',
     'PostgresManager',
+    'MySQLManager',
+    'SQLiteManager',
     'DatabaseManagerFactory',
     'create_database_manager'
 ]

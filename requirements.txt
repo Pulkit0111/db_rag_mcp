@@ -1,0 +1,18 @@
+# FastMCP framework for building MCP servers
+fastmcp>=0.1.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Web server for HTTP transport (optional, for production deployment)
+uvicorn>=0.22.0
+
+# PostgreSQL async driver
+asyncpg>=0.29.0
+
+# OpenAI client for LLM integration
+openai>=1.0.0
+
+# Optional: For development and testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0

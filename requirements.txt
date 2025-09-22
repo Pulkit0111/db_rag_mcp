@@ -13,6 +13,20 @@ asyncpg>=0.29.0
 # OpenAI client for LLM integration
 openai>=1.0.0
 
-# Optional: For development and testing
-pytest>=7.0.0
-pytest-asyncio>=0.21.0
+# Phase 1: Database support expansion
+aiomysql>=0.2.0          # MySQL support
+aiosqlite>=0.20.0        # SQLite support  
+pydantic>=2.0.0          # Configuration validation
+
+# Phase 2: Performance and advanced features
+redis>=5.0.0             # Caching
+pandas>=2.0.0            # Data processing
+sqlparse>=0.4.4          # SQL parsing and optimization
+
+# Phase 3: Visualization and export
+plotly>=5.17.0           # Visualization
+openpyxl>=3.1.0          # Excel export
+
+# Testing framework
+pytest>=7.4.0           # Testing
+pytest-asyncio>=0.21.0   # Async testing

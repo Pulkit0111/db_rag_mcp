@@ -2,3 +2,5 @@
 .venv/
 docs/
 __pycache__/
+.bmad-core
+.cursor

@@ -20,3 +20,13 @@ export interface ExampleQuery {
   text: string;
   description: string;
 }
+
+export interface Message {
+  id: string;
+  type: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: Date;
+  data?: any;
+  sql?: string;
+  error?: string;
+}

@@ -38,6 +38,11 @@ class ApiService {
     return response.data;
   }
 
+  async disconnectDatabase(): Promise<ApiResponse> {
+    const response = await this.client.post<ApiResponse>('/database/disconnect');
+    return response.data;
+  }
+
   // Query methods
   async queryData(naturalLanguageQuery: string): Promise<ApiResponse<QueryResult>> {
     const response = await this.client.post<ApiResponse<QueryResult>>('/query/execute', {

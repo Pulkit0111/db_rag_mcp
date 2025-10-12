@@ -18,7 +18,7 @@ import urllib.parse
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import only the tools we actually use
-from src.tools.connection import connect_database, get_connection_status
+from src.tools.connection import connect_database, get_connection_status, disconnect_database
 from src.tools.query import query_data
 
 # Request/Response models
@@ -122,6 +122,17 @@ async def connect_database_endpoint(request: DatabaseConnectionRequest):
         return {"success": True, "result": result}
     except Exception as e:
         print(f"Connection error: {str(e)}")
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/database/disconnect")
+async def disconnect_database_endpoint():
+    try:
+        ctx = MockContext()
+        result = await disconnect_database(ctx)
+        return {"success": result.get("success", True), "result": result}
+    except Exception as e:
+        print(f"Disconnection error: {str(e)}")
         traceback.print_exc()
         return {"success": False, "error": str(e)}
 
